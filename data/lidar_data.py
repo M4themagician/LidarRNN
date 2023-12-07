@@ -35,11 +35,28 @@ class LidarData():
 
     def step(self):
         for o in self.objects:
+            o.step()
             if o.has_left():
                 self.objects.remove(o)
-            o.step()
+            
         if len(self.objects) < self.max_object:
-            self.add_object(BoxObject(self.min_spawn_distance, self.delta_t, self.get_width_meter))
+            new_object = BoxObject(self.min_spawn_distance, self.delta_t, self.get_width_meter)
+            new_object_trajectory = new_object.get_relevant_trajectory()
+            new_object_trajectory_length = new_object_trajectory.shape[0]
+            collides = False
+            for o in self.objects:
+                test_trajectory = o.get_relevant_trajectory()
+                test_trajectory_length = test_trajectory.shape[0]
+                for i in range(min(new_object_trajectory_length, test_trajectory_length)):
+                    xy_new = new_object_trajectory[i, :2]
+                    xy_test = test_trajectory[i, :2]
+                    if np.linalg.norm(xy_new - xy_test) < new_object.cover_radius + o.cover_radius:
+                        collides = True
+                        break
+                    if collides:
+                        break
+            if not collides:
+                self.add_object(new_object)
         
 
     def world_to_pixel(self, xy):
@@ -51,7 +68,8 @@ if __name__ == '__main__':
     from data.box_object import BoxObject
 
     delta_t = 1/30
-    map = LidarData(600, 0.05, 20, 300*0.05, delta_t)
+    map_size = 600
+    map = LidarData(map_size, 0.05, 5, map_size/2*0.05, delta_t)
     test_object = BoxObject(map.get_min_spawn_distance(), delta_t, map.get_width_meter())
     map.add_object(test_object)
     while True:

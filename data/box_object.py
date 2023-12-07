@@ -4,7 +4,7 @@ import math
 import random
 
 from data.lidar_data import LidarData
-from data.geometry import rotate
+from data.geometry import rotate, random_number
 
 
 class BoxObject():
@@ -16,6 +16,10 @@ class BoxObject():
     initial_speed_range = (0, 20) #m/s
     box_constraints_mins = np.array((-1e20, -1e20, -1e20, -100, -50*math.pi/180))
     box_constraints_maxs =  np.array((1e20, 1e20, 1e20, 100, 50*math.pi/180))
+    control_constraints = np.array((4, 0.2))
+    persistent_control_steps = 300
+    frequency_scales = 6
+    frequency_range = (-1, 1)
     def __init__(self, min_spawn_distance, delta_t, map_width_meter, max_trajectory_steps = 1000):
         self.length = random.uniform(*self.length_range)
         self.width = random.uniform(*self.width_range)
@@ -26,14 +30,19 @@ class BoxObject():
         self.state = np.zeros(5)
         self.max_trajectory_steps = max_trajectory_steps
         self.trajectory = np.zeros((max_trajectory_steps, 5))
+        self.controls = np.zeros((self.persistent_control_steps, 2))
         self.cover_radius = math.sqrt((self.width/2)**2 + (self.length/2)**2)
         self.has_entered_counter = 0
         self.has_entered_counter_set = False
         self.min_spawn_distance = min_spawn_distance
         self.time_counter = 0
         self.has_left_counter = max_trajectory_steps
+        self.controls_set = False
+        self.control_time_horizon = 2*math.pi/(self.persistent_control_steps*delta_t)
+        self.control_params = {}
         self.init_state() # x, y, heading, speed, steering angle, steering_angle_acceleration, acceleration
         self.get_trajectory()
+        
 
     def init_state(self):
         cover_radius = self.cover_radius
@@ -68,6 +77,34 @@ class BoxObject():
 
     def has_left(self):
         return self.time_counter >= self.has_left_counter
+    
+    def get_random_frequencies_and_amplitudes(self):
+        frequencies = list()
+        for i in range(self.frequency_scales):
+            sign_s = random.randint(-1, 1)
+            sign_c = random.randint(-1, 1)
+            sign_a = random.randint(-1, 1)
+            omega_s = sign_s*2**i + random_number(self.frequency_range)
+            omega_c = sign_c*2**i + random_number(self.frequency_range)
+            amplitude = sign_a*random.random()/(2**i)
+            frequencies.append((amplitude, omega_s, omega_c))
+        return frequencies
+    
+    def get_steering_velocity(self, t):
+        steering_velocity = 0
+        amplitudes_and_frequencies = self.control_params['steering']
+        for (amplitude, omega_s, omega_c) in amplitudes_and_frequencies:
+            steering_velocity += 2*self.control_constraints[1]*amplitude*(math.cos(omega_c*t/self.control_time_horizon) + math.sin(omega_s*t/self.control_time_horizon))
+        steering_velocity = np.clip(steering_velocity, -self.control_constraints[1], self.control_constraints[1])
+        return steering_velocity
+
+    def get_acceleration(self, t):
+        acceleration = 0
+        amplitudes_and_frequencies = self.control_params['acceleration']
+        for (amplitude, omega_s, omega_c) in amplitudes_and_frequencies:
+            acceleration += 2*self.control_constraints[0]*amplitude*(math.cos(omega_c*t/self.control_time_horizon) + math.sin(omega_s*t/self.control_time_horizon))
+        acceleration = np.clip(acceleration, -self.control_constraints[0], self.control_constraints[0])
+        return acceleration
 
     def dynamics(self, X, U):
         _, _, yaw, v, delta = X
@@ -78,11 +115,20 @@ class BoxObject():
         delta_dot = U[1]
         return np.array((xdot, ydot, yaw_dot, vdot, delta_dot))
     
-    def get_controls(self):
-        return np.array((0.0, 0.05))
+    def get_controls(self, index):
+        if index % self.persistent_control_steps == 0:
+            self.control_params['steering'] = self.get_random_frequencies_and_amplitudes()
+            self.control_params['acceleration'] = self.get_random_frequencies_and_amplitudes()
+            for i in range(self.persistent_control_steps):
+                self.controls[i, :] = np.array((self.get_acceleration(i*self.delta_t), self.get_steering_velocity(i*self.delta_t)))
+        
+            
+        return self.controls[index % self.persistent_control_steps, :]
+    
+    def get_relevant_trajectory(self):
+        return self.trajectory[self.time_counter:self.has_left_counter, :]
     
     def get_trajectory(self):
-        
         h = self.delta_t
         f = lambda t, x, u: self.dynamics(x, u)
         x = self.state
@@ -95,7 +141,7 @@ class BoxObject():
                 self.has_entered_counter = index
                 self.has_entered_counter_set = True
             x = self.trajectory[index, :]
-            u = self.get_controls()
+            u = self.get_controls(index)
             t = 0
             k1 = h * (f(t, x, u))
             k2 = h * (f(t + h/2, x + k1/2, u))

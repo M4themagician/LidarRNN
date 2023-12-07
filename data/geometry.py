@@ -1,5 +1,6 @@
 import numpy as np
 import math
+import random
 
 
 def rotate(xy, angle):
@@ -13,3 +14,6 @@ def rotate_around(xy, pt, angle):
     xy = rotate(xy, angle)
     xy = xy + pt
     return xy
+
+def random_number(range):
+    return range[0] + (range[1]-range[0])*random.random()
