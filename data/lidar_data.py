@@ -44,11 +44,10 @@ class LidarData():
             
         if len(self.objects) < self.max_object:
             new_object = BoxObject(self.min_spawn_distance, self.delta_t, self.get_width_meter)
-            if new_object.has_left_counter == new_object.max_trajectory_steps:
+            if new_object.has_left_counter >= new_object.max_trajectory_steps -1:
                 return 
             new_object_trajectory = new_object.get_relevant_trajectory()
             new_object_trajectory_length = new_object_trajectory.shape[0]
-            collides = False
             for o in self.objects:
                 test_trajectory = o.get_relevant_trajectory()
                 test_trajectory_length = test_trajectory.shape[0]
