@@ -13,11 +13,11 @@ class BoxObject():
     wheelbase_range = (1.87, 3.365) #m
     roundness_range = (0, 1)
     initial_heading_range = (-5*math.pi/180, 5*math.pi/180) #rad
-    initial_speed_range = (0, 20) #m/s
+    initial_speed_range = (3, 20) #m/s
     box_constraints_mins = np.array((-1e20, -1e20, -1e20, -100, -50*math.pi/180))
     box_constraints_maxs =  np.array((1e20, 1e20, 1e20, 100, 50*math.pi/180))
     control_constraints = np.array((4, 0.2))
-    persistent_control_steps = 300
+    persistent_control_steps = 150
     frequency_scales = 6
     frequency_range = (-1, 1)
     def __init__(self, min_spawn_distance, delta_t, map_width_meter, max_trajectory_steps = 1000):
@@ -38,8 +38,9 @@ class BoxObject():
         self.time_counter = 0
         self.has_left_counter = max_trajectory_steps
         self.controls_set = False
-        self.control_time_horizon = 2*math.pi/(self.persistent_control_steps*delta_t)
+        self.control_time_horizon = math.pi/(self.persistent_control_steps*delta_t)
         self.control_params = {}
+        self.corners = np.zeros(4)
         self.init_state() # x, y, heading, speed, steering angle, steering_angle_acceleration, acceleration
         self.get_trajectory()
         
@@ -48,8 +49,8 @@ class BoxObject():
         cover_radius = self.cover_radius
         x,y = 0,0 
         while max(abs(x), abs(y)) < self.min_spawn_distance + self.cover_radius + self.length/2:
-            x = random.uniform(-(self.min_spawn_distance + 3*cover_radius), self.min_spawn_distance + 3*cover_radius)
-            y = random.uniform(-(self.min_spawn_distance + 3*cover_radius), self.min_spawn_distance + 3*cover_radius)
+            x = random.uniform(-(self.min_spawn_distance + 2*cover_radius), self.min_spawn_distance + 2*cover_radius)
+            y = random.uniform(-(self.min_spawn_distance + 2*cover_radius), self.min_spawn_distance + 2*cover_radius)
         self.state[0] = x
         self.state[1] = y
         # initial heading should point towards map center 
@@ -70,6 +71,12 @@ class BoxObject():
         corners.append((- self.rear_axle_from_rear_end + self.length, - self.width/2))
         corners.append((- self.rear_axle_from_rear_end, - self.width/2))
         corners.append((- self.rear_axle_from_rear_end, self.width/2))
+
+        # corners.append((self.length/2, self.width/2))
+        # corners.append((self.length/2, - self.width/2))
+        # corners.append((-self.length/2, - self.width/2))
+        # corners.append((-self.length/2, self.width/2))
+        self.corners = np.array(corners)
         corners = [rotate(c, self.state[2]) for c in corners]
         corners_px = np.array([map.world_to_pixel(c + self.state[:2]) for c in corners]).astype(np.int32)
         cv2.polylines(map.map,[corners_px],True,(255,255,255))
@@ -81,6 +88,9 @@ class BoxObject():
     def get_random_frequencies_and_amplitudes(self):
         frequencies = list()
         for i in range(self.frequency_scales):
+            if i == 0:
+                frequencies.append((0, 0, 0))
+                continue
             sign_s = random.randint(-1, 1)
             sign_c = random.randint(-1, 1)
             sign_a = random.randint(-1, 1)
@@ -126,7 +136,9 @@ class BoxObject():
         return self.controls[index % self.persistent_control_steps, :]
     
     def get_relevant_trajectory(self):
-        return self.trajectory[self.time_counter:self.has_left_counter, :]
+        trajectory = self.trajectory[self.time_counter:self.has_left_counter, :3].copy()
+        trajectory[:, :2] += np.array([rotate((-self.rear_axle_from_rear_end + self.length/2, 0), heading) for heading in trajectory[:, 2]])
+        return trajectory
     
     def get_trajectory(self):
         h = self.delta_t
@@ -135,9 +147,11 @@ class BoxObject():
         t = 0
         index = 0
         self.trajectory[index, :] = self.state
-
-        while (not self.has_entered_counter_set) or (max(abs(self.trajectory[index, 0]), abs(self.trajectory[index, 1])) < self.min_spawn_distance + self.cover_radius + self.length/2):
-            if max(abs(self.trajectory[index, 0]), abs(self.trajectory[index, 1])) < self.min_spawn_distance + self.cover_radius + self.length/2:
+        vehicle_mid_offset = rotate((-self.rear_axle_from_rear_end + self.length/2, 0), self.trajectory[index, 2])
+        
+        while (not self.has_entered_counter_set) or (max(abs(self.trajectory[index, 0] + vehicle_mid_offset[0]), abs(self.trajectory[index, 1] + vehicle_mid_offset[1])) < self.min_spawn_distance + self.cover_radius):
+            vehicle_mid_offset = rotate((-self.rear_axle_from_rear_end + self.length/2, 0), self.trajectory[index, 2])
+            if max(abs(self.trajectory[index, 0] + vehicle_mid_offset[0]), abs(self.trajectory[index, 1] + vehicle_mid_offset[0])) < self.min_spawn_distance + self.cover_radius:
                 self.has_entered_counter = index
                 self.has_entered_counter_set = True
             x = self.trajectory[index, :]
@@ -154,6 +168,7 @@ class BoxObject():
             index += 1  
             if index == self.max_trajectory_steps - 1:
                 break
+        # self.trajectory[:, :2] += np.array([rotate((-self.rear_axle_from_rear_end + self.length/2, 0), heading) for heading in self.trajectory[:, 2]])
         self.has_left_counter = index
 
     def step(self):

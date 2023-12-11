@@ -4,7 +4,7 @@ import numpy as np
 
 
 class LidarData():
-    def __init__(self, width_px, pixel_scale, max_objects, min_spawn_distance, delta_t):
+    def __init__(self, width_px, pixel_scale, max_objects, min_spawn_distance, delta_t, debug = False):
         self.width_px = width_px
         self.pixel_scale = pixel_scale
         self.max_object = max_objects
@@ -12,9 +12,8 @@ class LidarData():
         self.delta_t = delta_t
         self.objects = []
         self.map = np.zeros((self.width_px, self.width_px), dtype=np.uint8)
-        #cv2.circle(self.map, self.world_to_pixel((0,0)).astype(np.int32), 5, color=((255,255,255)))
-        #cv2.rectangle(self.map, self.world_to_pixel((-self.min_spawn_distance, -self.min_spawn_distance)).astype(np.int32), self.world_to_pixel((self.min_spawn_distance,self.min_spawn_distance)).astype(np.int32), (255, 255, 255), 3)
-
+        self.debug = debug
+        
     def get_width_meter(self):
         return self.width_px*self.pixel_scale
 
@@ -29,6 +28,10 @@ class LidarData():
 
     def draw(self, wait = 0):
         self.map = np.zeros((self.width_px, self.width_px), dtype=np.uint8)
+        if self.debug:
+            cv2.circle(self.map, self.world_to_pixel((0,0)).astype(np.int32), 5, color=((255,255,255)))
+            cv2.rectangle(self.map, self.world_to_pixel((-self.min_spawn_distance, -self.min_spawn_distance)).astype(np.int32), self.world_to_pixel((self.min_spawn_distance,self.min_spawn_distance)).astype(np.int32), (255, 255, 255), 3)
+
         for o in self.objects:
             o.draw(self)
         cv2.imshow('Map', self.map)
@@ -53,8 +56,8 @@ class LidarData():
                     if np.linalg.norm(xy_new - xy_test) < new_object.cover_radius + o.cover_radius:
                         collides = True
                         break
-                    if collides:
-                        break
+                if collides:
+                    break
             if not collides:
                 self.add_object(new_object)
         
@@ -67,17 +70,24 @@ class LidarData():
 if __name__ == '__main__':
     from data.box_object import BoxObject
 
+    debug = False
     delta_t = 1/30
     map_size = 600
-    map = LidarData(map_size, 0.05, 5, map_size/2*0.05, delta_t)
+    max_objects = 50
+    pixel_scale = map_size/4*0.05 if debug else map_size/2*0.05
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    #writer = cv2.VideoWriter('video.mp4', fourcc= fourcc, fps=1/delta_t, frameSize=(map_size, map_size), isColor=False)
+    map = LidarData(map_size, 0.05, max_objects, pixel_scale, delta_t, debug=debug)
     test_object = BoxObject(map.get_min_spawn_distance(), delta_t, map.get_width_meter())
     map.add_object(test_object)
     while True:
         map.draw()
+        #writer.write(map.map.astype(np.uint8))
         map.step()
-        key = cv2.waitKey(int(delta_t*1000))
+        key = cv2.waitKey(1) #int(delta_t*1000))
         if key == 27:
             break
+    #writer.release()
 
 
 
