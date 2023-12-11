@@ -44,6 +44,8 @@ class LidarData():
             
         if len(self.objects) < self.max_object:
             new_object = BoxObject(self.min_spawn_distance, self.delta_t, self.get_width_meter)
+            if new_object.has_left_counter == new_object.max_trajectory_steps:
+                return 
             new_object_trajectory = new_object.get_relevant_trajectory()
             new_object_trajectory_length = new_object_trajectory.shape[0]
             collides = False
@@ -54,12 +56,9 @@ class LidarData():
                     xy_new = new_object_trajectory[i, :2]
                     xy_test = test_trajectory[i, :2]
                     if np.linalg.norm(xy_new - xy_test) < new_object.cover_radius + o.cover_radius:
-                        collides = True
-                        break
-                if collides:
-                    break
-            if not collides:
-                self.add_object(new_object)
+                        return
+
+            self.add_object(new_object)
         
 
     def world_to_pixel(self, xy):
@@ -71,23 +70,29 @@ if __name__ == '__main__':
     from data.box_object import BoxObject
 
     debug = False
+    write_video = False
     delta_t = 1/30
+    max_trajectory_length = 1000
     map_size = 600
     max_objects = 50
     pixel_scale = map_size/4*0.05 if debug else map_size/2*0.05
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    #writer = cv2.VideoWriter('video.mp4', fourcc= fourcc, fps=1/delta_t, frameSize=(map_size, map_size), isColor=False)
+    if write_video:
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter('video.mp4', fourcc= fourcc, fps=1/delta_t, frameSize=(map_size, map_size), isColor=False)
     map = LidarData(map_size, 0.05, max_objects, pixel_scale, delta_t, debug=debug)
-    test_object = BoxObject(map.get_min_spawn_distance(), delta_t, map.get_width_meter())
+    test_object = BoxObject(map.get_min_spawn_distance(), delta_t, map.get_width_meter(), max_trajectory_steps=max_trajectory_length)
     map.add_object(test_object)
     while True:
         map.draw()
-        #writer.write(map.map.astype(np.uint8))
+        if write_video:
+            writer.write(map.map.astype(np.uint8))
         map.step()
         key = cv2.waitKey(1) #int(delta_t*1000))
         if key == 27:
             break
-    #writer.release()
+    
+    if write_video:
+        writer.release()
 
 
 
