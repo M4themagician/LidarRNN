@@ -12,8 +12,8 @@ class BoxObject():
     width_range = (1.66, 2.1) #m
     wheelbase_range = (1.87, 3.365) #m
     roundness_range = (0, 1)
-    initial_heading_range = (-5*math.pi/180, 5*math.pi/180) #rad
-    initial_speed_range = (3, 20) #m/s
+    initial_heading_range = (-10*math.pi/180, 10*math.pi/180) #rad
+    initial_speed_range = (5, 40) #m/s
     box_constraints_mins = np.array((-1e20, -1e20, -1e20, -100, -50*math.pi/180))
     box_constraints_maxs =  np.array((1e20, 1e20, 1e20, 100, 50*math.pi/180))
     control_constraints = np.array((4, 0.2))
@@ -88,9 +88,9 @@ class BoxObject():
     def get_random_frequencies_and_amplitudes(self):
         frequencies = list()
         for i in range(self.frequency_scales):
-            if i == 0:
-                frequencies.append((0, 0, 0))
-                continue
+            # if i == 0:
+            #     frequencies.append((0, 0, 0))
+            #     continue
             sign_s = random.randint(-1, 1)
             sign_c = random.randint(-1, 1)
             sign_a = random.randint(-1, 1)
@@ -139,6 +139,10 @@ class BoxObject():
         trajectory = self.trajectory[self.time_counter:self.has_left_counter, :3].copy()
         trajectory[:, :2] += np.array([rotate((-self.rear_axle_from_rear_end + self.length/2, 0), heading) for heading in trajectory[:, 2]])
         return trajectory
+    
+    def get_centered_pose(self):
+        centered_pose = self.state.copy()
+        centered_pose[:3] += rotate((-self.rear_axle_from_rear_end + self.length/2, 0), centered_pose[2])
     
     def get_trajectory(self):
         h = self.delta_t
