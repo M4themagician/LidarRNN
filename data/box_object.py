@@ -13,7 +13,7 @@ class BoxObject():
     wheelbase_range = (1.87, 3.365) #m
     roundness_range = (0, 1)
     initial_heading_range = (-10*math.pi/180, 10*math.pi/180) #rad
-    initial_speed_range = (5, 40) #m/s
+    initial_speed_range = (5, 50) #m/s
     box_constraints_mins = np.array((-1e20, -1e20, -1e20, -100, -50*math.pi/180))
     box_constraints_maxs =  np.array((1e20, 1e20, 1e20, 100, 50*math.pi/180))
     control_constraints = np.array((4, 0.2))
@@ -66,18 +66,19 @@ class BoxObject():
         self.state[3] = init_speed
 
     def draw(self, map: LidarData):
-        corners = []
-        corners.append((-self.rear_axle_from_rear_end + self.length, self.width/2))
-        corners.append((- self.rear_axle_from_rear_end + self.length, - self.width/2))
-        corners.append((- self.rear_axle_from_rear_end, - self.width/2))
-        corners.append((- self.rear_axle_from_rear_end, self.width/2))
+        # corners = []
+        # corners.append((-self.rear_axle_from_rear_end + self.length, self.width/2))
+        # corners.append((- self.rear_axle_from_rear_end + self.length, - self.width/2))
+        # corners.append((- self.rear_axle_from_rear_end, - self.width/2))
+        # corners.append((- self.rear_axle_from_rear_end, self.width/2))
 
-        # corners.append((self.length/2, self.width/2))
-        # corners.append((self.length/2, - self.width/2))
-        # corners.append((-self.length/2, - self.width/2))
-        # corners.append((-self.length/2, self.width/2))
-        self.corners = np.array(corners)
-        corners = [rotate(c, self.state[2]) for c in corners]
+        # # # corners.append((self.length/2, self.width/2))
+        # # # corners.append((self.length/2, - self.width/2))
+        # # # corners.append((-self.length/2, - self.width/2))
+        # # # corners.append((-self.length/2, self.width/2))
+        # self.corners = np.array(corners)
+        # corners = [rotate(c, self.state[2]) for c in corners]
+        corners = self.get_corners()
         corners_px = np.array([map.world_to_pixel(c + self.state[:2]) for c in corners]).astype(np.int32)
         cv2.polylines(map.map,[corners_px],True,(255,255,255))
         cv2.circle(map.map, map.world_to_pixel(self.state[:2]).astype(np.int32), 5, color=((255,255,255)))
@@ -142,7 +143,37 @@ class BoxObject():
     
     def get_centered_pose(self):
         centered_pose = self.state.copy()
-        centered_pose[:3] += rotate((-self.rear_axle_from_rear_end + self.length/2, 0), centered_pose[2])
+        centered_pose[:2] += rotate((-self.rear_axle_from_rear_end + self.length/2, 0), centered_pose[2])
+        return centered_pose
+
+    def get_enclosing_box(self):
+        centered_pose = self.get_centered_pose()
+        corners = []
+        corners.append((self.length/2, self.width/2))
+        corners.append((self.length/2, - self.width/2))
+        corners.append((-self.length/2, - self.width/2))
+        corners.append((-self.length/2, self.width/2))
+        self.corners = np.array(corners)
+        corners = [rotate(c, self.state[2]) for c in corners]
+        corners = np.array([centered_pose[:2] + c for c in corners])
+        box = np.array([np.min(corners[:, 0]), np.min(corners[:, 1]), np.max(corners[:, 0]), np.max(corners[:, 1])])
+        return box
+    
+    def get_corners(self):
+        corners = []
+        corners.append((-self.rear_axle_from_rear_end + self.length, self.width/2))
+        corners.append((- self.rear_axle_from_rear_end + self.length, - self.width/2))
+        corners.append((- self.rear_axle_from_rear_end, - self.width/2))
+        corners.append((- self.rear_axle_from_rear_end, self.width/2))
+
+        # # corners.append((self.length/2, self.width/2))
+        # # corners.append((self.length/2, - self.width/2))
+        # # corners.append((-self.length/2, - self.width/2))
+        # # corners.append((-self.length/2, self.width/2))
+        self.corners = np.array(corners)
+        corners = [rotate(c, self.state[2]) for c in corners]
+        return corners
+
     
     def get_trajectory(self):
         h = self.delta_t
