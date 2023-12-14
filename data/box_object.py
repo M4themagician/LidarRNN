@@ -2,8 +2,6 @@ import numpy as np
 import cv2
 import math
 import random
-
-from data.lidar_data import LidarData
 from data.geometry import rotate, random_number
 
 
@@ -65,7 +63,7 @@ class BoxObject():
         self.state[2] = init_heading
         self.state[3] = init_speed
 
-    def draw(self, map: LidarData):
+    def draw(self, origin, corners, map):
         # corners = []
         # corners.append((-self.rear_axle_from_rear_end + self.length, self.width/2))
         # corners.append((- self.rear_axle_from_rear_end + self.length, - self.width/2))
@@ -78,10 +76,10 @@ class BoxObject():
         # # # corners.append((-self.length/2, self.width/2))
         # self.corners = np.array(corners)
         # corners = [rotate(c, self.state[2]) for c in corners]
-        corners = self.get_corners()
-        corners_px = np.array([map.world_to_pixel(c + self.state[:2]) for c in corners]).astype(np.int32)
-        cv2.polylines(map.map,[corners_px],True,(255,255,255))
-        cv2.circle(map.map, map.world_to_pixel(self.state[:2]).astype(np.int32), 5, color=((255,255,255)))
+        #corners = self.get_corners()
+        #corners_px = np.array([map.world_to_pixel(c + self.state[:2]) for c in corners]).astype(np.int32)
+        cv2.polylines(map ,corners,True,(255,255,255))
+        cv2.circle(map, origin.astype(np.int32), 5, color=((255,255,255)))
 
     def has_left(self):
         return self.time_counter >= self.has_left_counter

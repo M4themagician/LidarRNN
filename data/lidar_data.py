@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from data.box_object import BoxObject
 
 
 
@@ -44,7 +45,11 @@ class LidarData():
             cv2.rectangle(self.map, self.world_to_pixel((-self.min_spawn_distance, -self.min_spawn_distance)).astype(np.int32), self.world_to_pixel((self.min_spawn_distance,self.min_spawn_distance)).astype(np.int32), (255, 255, 255), 3)
 
         for o in self.objects:
-            o.draw(self)
+            corners = o.get_corners()
+            corners_px = np.array([self.world_to_pixel(c + o.state[:2]) for c in corners]).astype(np.int32)
+            # cv2.polylines(map.map,[corners_px],True,(255,255,255))
+            # cv2.circle(map, map.world_to_pixel(self.state[:2]).astype(np.int32), 5, color=((255,255,255)))
+            o.draw(self.world_to_pixel(o.state[:2]), [corners_px], self.map)
 
     def add_new_object(self):
         new_object = BoxObject(self.min_spawn_distance, self.delta_t, self.get_width_meter)
@@ -81,7 +86,7 @@ class LidarData():
         self.step()
         self.draw()
         item = {}
-        item['input_tensor'] = torch.from_numpy(self.map)
+        item['input_tensor'] = torch.from_numpy(self.map).float()
 
         ### define matching tensor and regression target tensor (full map width)
         # fill with ignore tensor (just draw boxes filled)
@@ -124,7 +129,7 @@ class LidarData():
             regression_targets[ymin:ymax, xmin:xmax, 7:9] = np.array([obj.length, obj.width])
             corners = obj.get_corners()
             corners_px = np.array([self.world_to_pixel(c + obj.state[:2]) for c in corners]).astype(np.int32)
-            cv2.fillPoly(matching_tensor, pts=[corners_px],color=(255),lineType=cv2.LINE_8)
+            cv2.fillPoly(matching_tensor, pts=[corners_px],color=(1),lineType=cv2.LINE_8)
 
 
             #cv2.rectangle(self.map, box[0], box[1], color=(255, 255, 255), thickness=-1)
@@ -137,7 +142,7 @@ class LidarData():
         #print(torch.max(regression_targets[..., :2]), torch.max(regression_targets[..., 7:9]))
 
         item['classification_targets'] = F.interpolate(matching_tensor.unsqueeze(0).unsqueeze(0), (self.target_width, self.target_width), mode='nearest').squeeze(0).squeeze(0)
-        item['regression_targets'] = F.interpolate(regression_targets.permute(2, 0, 1).unsqueeze(0), (self.target_width, self.target_width), mode='nearest').squeeze(0).permute(1, 2, 0)
+        item['regression_targets'] = F.interpolate(regression_targets.permute(2, 0, 1).unsqueeze(0), (self.target_width, self.target_width), mode='nearest').squeeze(0)
         return item
 
         
@@ -160,6 +165,18 @@ class LidarData():
         xy = [c - self.width_px/2 for c in xy]
         xy = [(c+0.5)*self.pixel_scale for c in xy]
         return xy
+    
+def make_lidar_data():
+    
+    debug = False
+    delta_t = 1/30
+    map_size = 800
+    target_size = 200
+    max_objects = 20
+    pixel_scale = 0.2 if debug else 0.075
+    map_width_meter = 0.9*map_size/2*pixel_scale if debug else map_size/2*pixel_scale
+    data = LidarData(map_size, pixel_scale, max_objects, map_width_meter, delta_t, target_size, debug=debug)
+    return data
 
         
 if __name__ == '__main__':
@@ -168,7 +185,7 @@ if __name__ == '__main__':
 
     def plot_item(item):
         class_idxs = item['classification_targets'].numpy()
-        regression_targets = item['regression_targets'].numpy()
+        regression_targets = item['regression_targets'].permute(1, 2, 0).numpy()
         #rel_position = regression_targets[..., 2]
         #print(rel_position.min(), rel_position.max())
         rel_position = np.linalg.norm(regression_targets[..., :2], axis=-1)
