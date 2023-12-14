@@ -184,8 +184,8 @@ if __name__ == '__main__':
     write_video = False
     delta_t = 1/30
     max_trajectory_length = 1000
-    map_size = 600
-    target_size = 600
+    map_size = 800
+    target_size = 200
     max_objects = 20
     pixel_scale = 0.2 if debug else 0.075
     map_width_meter = 0.9*map_size/2*pixel_scale if debug else map_size/2*pixel_scale
