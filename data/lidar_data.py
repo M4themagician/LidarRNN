@@ -23,7 +23,6 @@ class LidarData():
         grid_x, grid_y = torch.meshgrid(relative_coords_tensor, relative_coords_tensor, indexing='xy')
         grid = torch.dstack([grid_x, grid_y])
         self.rel_coordinate_grid = grid
-        print(grid)
 
         
     def get_width_meter(self):
@@ -114,10 +113,12 @@ class LidarData():
             box = [c for b in box for c in b]
             
             xmin, ymin, xmax, ymax = box# [min(self.width_px, max(0,c)) for c in box]
+            # dilate the regression target box by one, otherwise you get some strange artifacts due to masking with result of fillPoly.
             xmin -= 1
             ymin -= 1
             xmax += 1
             ymax += 1
+            # clip to image dims, otherwise more weirdness.
             xmin = min(self.width_px, max(0,xmin))
             ymin = min(self.width_px, max(0,ymin))
             xmax = min(self.width_px, max(0,xmax))
@@ -130,17 +131,10 @@ class LidarData():
             corners = obj.get_corners()
             corners_px = np.array([self.world_to_pixel(c + obj.state[:2]) for c in corners]).astype(np.int32)
             cv2.fillPoly(matching_tensor, pts=[corners_px],color=(1),lineType=cv2.LINE_8)
-
-
-            #cv2.rectangle(self.map, box[0], box[1], color=(255, 255, 255), thickness=-1)
-            #print(enclosing_box)
         matching_tensor = torch.from_numpy(matching_tensor)
         regression_targets = torch.from_numpy(regression_targets)
-        #print(regression_targets.size(), self.rel_coordinate_grid.size())
         regression_targets[..., :2] = regression_targets[..., :2] - self.rel_coordinate_grid
         regression_targets[matching_tensor==0] = 0
-        #print(torch.max(regression_targets[..., :2]), torch.max(regression_targets[..., 7:9]))
-
         item['classification_targets'] = F.interpolate(matching_tensor.unsqueeze(0).unsqueeze(0), (self.target_width, self.target_width), mode='nearest').squeeze(0).squeeze(0)
         item['regression_targets'] = F.interpolate(regression_targets.permute(2, 0, 1).unsqueeze(0), (self.target_width, self.target_width), mode='nearest').squeeze(0)
         return item
@@ -180,17 +174,53 @@ def make_lidar_data():
 
         
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
     from data.box_object import BoxObject
 
-    def plot_item(item):
+    def plot_item(item, key):
         class_idxs = item['classification_targets'].numpy()
         regression_targets = item['regression_targets'].permute(1, 2, 0).numpy()
-        #rel_position = regression_targets[..., 2]
-        #print(rel_position.min(), rel_position.max())
-        rel_position = np.linalg.norm(regression_targets[..., :2], axis=-1)
-        heatmap = np.uint8(np.interp(rel_position, (rel_position.min(), rel_position.max()), (0, 255)))
-        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        normalize = None
+        colormap = cv2.COLORMAP_HOT
+        caption = "Norm of positional offsets"
+        if key == ord('x'):
+            colormap = cv2.COLORMAP_TWILIGHT
+            data = regression_targets[..., 0]
+            normalize = (-6, 6)
+            caption = "x offset to vehicle center"
+        elif key == ord('y'):
+            colormap = cv2.COLORMAP_TWILIGHT
+            data = regression_targets[..., 1]
+            normalize = (-6, 6)
+            caption = "y offset to vehicle center"
+        elif key == ord('r'):
+            colormap = cv2.COLORMAP_TWILIGHT
+            data = np.arctan2(regression_targets[..., 3], regression_targets[..., 2])
+            normalize = (-2*np.pi, 2*np.pi)
+            caption = "vehicle heading"
+        elif key == ord('v'):
+            data = np.linalg.norm(regression_targets[..., 4:6], axis=-1)
+            normalize = (0, 60)
+            caption = "norm of vehicle speed"
+        elif key == ord('o'):
+            colormap = cv2.COLORMAP_TWILIGHT
+            data = regression_targets[..., 6]
+            normalize = (-10, 10)
+            caption = "angular velocity"
+        elif key == ord('l'):
+            data = regression_targets[..., 7]
+            normalize = (2.69, 6)
+            caption = "vehicle length"
+        elif key == ord('w'):
+            data = regression_targets[..., 8]
+            normalize = (1.66, 2.1)
+            caption = "vehicle width"
+        else:
+            data = np.linalg.norm(regression_targets[..., :2], axis=-1)
+            normalize = (0, 6)
+        normalize = (data.min(), data.max()) if normalize is None else normalize
+        heatmap = np.uint8(np.interp(data, normalize, (0, 255)))
+        heatmap = cv2.applyColorMap(heatmap, colormap)
+        cv2.putText(heatmap, caption, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, color=(255, 255, 255), thickness=2)
         cv2.imshow("Regression Targets", heatmap)
         cv2.imshow("Class Targets", class_idxs)
 
@@ -200,24 +230,21 @@ if __name__ == '__main__':
     debug = False
     write_video = False
     delta_t = 1/30
-    max_trajectory_length = 1000
-    map_size = 800
-    target_size = 200
+    max_trajectory_length = 300
+    map_size = 600
+    target_size = 600
     max_objects = 20
-    pixel_scale = 0.2 if debug else 0.075
+    pixel_scale = 0.2 if debug else 0.05
     map_width_meter = 0.9*map_size/2*pixel_scale if debug else map_size/2*pixel_scale
     if write_video:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         writer = cv2.VideoWriter('video.mp4', fourcc= fourcc, fps=1/delta_t, frameSize=(map_size, map_size), isColor=False)
     map = LidarData(map_size, pixel_scale, max_objects, map_width_meter, delta_t, target_size, debug=debug)
-
+    mode_key = 0
     k = 0
     while True:
-        map.step()
-        map.draw()
         item = map.__getitem__(0)
-        if k > 30:
-            plot_item(item)
+        plot_item(item, mode_key)
 
         cv2.imshow('Input Image', map.map)
         #image_lst.append(map.map.astype(np.uint8))
@@ -227,8 +254,16 @@ if __name__ == '__main__':
         key = cv2.waitKey(1) #int(delta_t*1000))
         if key == 27:
             break
+        elif key == 32:
+            while True:
+                key = cv2.waitKey(0)
+                if key > 0 and key != 32:
+                    mode_key = key
+                plot_item(item, mode_key)
+                if key == 32:
+                    break
         elif key > 0:
-            key = cv2.waitKey(0)
+            mode_key = key
         k += 1
     
     if write_video:

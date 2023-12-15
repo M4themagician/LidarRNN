@@ -53,31 +53,12 @@ class BoxObject():
         self.state[1] = y
         # initial heading should point towards map center 
         init_heading = math.atan2(-y, -x) + random.uniform(*self.initial_heading_range)
-        #xy_offset = (0,0) #(-self.length/2 + self.rear_axle_from_rear_end, 0)
-        #xy_offset_rotated = rotate(xy_offset, init_heading)
-        # x = x - (self.length - self.rear_axle_from_rear_end)*(math.cos(init_heading) - math.sin(init_heading))
-        # y = y - (self.length - self.rear_axle_from_rear_end)*(math.sin(init_heading) + math.cos(init_heading))
-        init_speed = random.uniform(*self.initial_speed_range)
 
-        #self.state[:2] += xy_offset
+        init_speed = random.uniform(*self.initial_speed_range)
         self.state[2] = init_heading
         self.state[3] = init_speed
 
     def draw(self, origin, corners, map):
-        # corners = []
-        # corners.append((-self.rear_axle_from_rear_end + self.length, self.width/2))
-        # corners.append((- self.rear_axle_from_rear_end + self.length, - self.width/2))
-        # corners.append((- self.rear_axle_from_rear_end, - self.width/2))
-        # corners.append((- self.rear_axle_from_rear_end, self.width/2))
-
-        # # # corners.append((self.length/2, self.width/2))
-        # # # corners.append((self.length/2, - self.width/2))
-        # # # corners.append((-self.length/2, - self.width/2))
-        # # # corners.append((-self.length/2, self.width/2))
-        # self.corners = np.array(corners)
-        # corners = [rotate(c, self.state[2]) for c in corners]
-        #corners = self.get_corners()
-        #corners_px = np.array([map.world_to_pixel(c + self.state[:2]) for c in corners]).astype(np.int32)
         cv2.polylines(map ,corners,True,(255,255,255))
         cv2.circle(map, origin.astype(np.int32), 5, color=((255,255,255)))
 
@@ -87,9 +68,6 @@ class BoxObject():
     def get_random_frequencies_and_amplitudes(self):
         frequencies = list()
         for i in range(self.frequency_scales):
-            # if i == 0:
-            #     frequencies.append((0, 0, 0))
-            #     continue
             sign_s = random.randint(-1, 1)
             sign_c = random.randint(-1, 1)
             sign_a = random.randint(-1, 1)
@@ -163,16 +141,10 @@ class BoxObject():
         corners.append((- self.rear_axle_from_rear_end + self.length, - self.width/2))
         corners.append((- self.rear_axle_from_rear_end, - self.width/2))
         corners.append((- self.rear_axle_from_rear_end, self.width/2))
-
-        # # corners.append((self.length/2, self.width/2))
-        # # corners.append((self.length/2, - self.width/2))
-        # # corners.append((-self.length/2, - self.width/2))
-        # # corners.append((-self.length/2, self.width/2))
         self.corners = np.array(corners)
         corners = [rotate(c, self.state[2]) for c in corners]
         return corners
 
-    
     def get_trajectory(self):
         h = self.delta_t
         f = lambda t, x, u: self.dynamics(x, u)
@@ -201,7 +173,6 @@ class BoxObject():
             index += 1  
             if index == self.max_trajectory_steps - 1:
                 break
-        # self.trajectory[:, :2] += np.array([rotate((-self.rear_axle_from_rear_end + self.length/2, 0), heading) for heading in self.trajectory[:, 2]])
         self.has_left_counter = index
 
     def step(self):

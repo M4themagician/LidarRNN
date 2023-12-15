@@ -1,4 +1,4 @@
-from data.lidar_data import make_lidar_data, LidarData
+from data.lidar_data import make_lidar_data
 from network.lidarrnn import LidarRNN
 from loss.loss import BoxTrackingLoss
 

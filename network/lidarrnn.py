@@ -9,7 +9,7 @@ class LidarRNN(nn.Module):
         layers = []
         in_channels = 1
         for c in self.down_channels:
-            layers.append(ResidualBlock(in_channels, c, nn.ReLU, separable=True))
+            layers.append(ResidualBlock(in_channels, c, nn.ReLU, depth = 2, separable=True))
             in_channels = c
         
         for c in self.up_channels:
