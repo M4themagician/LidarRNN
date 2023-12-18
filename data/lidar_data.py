@@ -125,9 +125,10 @@ class LidarData():
             ymax = min(self.width_px, max(0,ymax))
             regression_targets[ymin:ymax, xmin:xmax, :2] = state[:2]
             regression_targets[ymin:ymax, xmin:xmax, 2:4] = np.array([np.cos(state[2]), np.sin(state[2])])
-            regression_targets[ymin:ymax, xmin:xmax, 4:6] = np.array([state[3]*np.cos(state[2]), state[3]*np.sin(state[2])])
-            regression_targets[ymin:ymax, xmin:xmax, 6] = state[3]/obj.wheelbase*np.tan(state[4])
-            regression_targets[ymin:ymax, xmin:xmax, 7:9] = np.array([obj.length, obj.width])
+            regression_targets[ymin:ymax, xmin:xmax, 4:6] = np.array([obj.length, obj.width])
+            regression_targets[ymin:ymax, xmin:xmax, 6:8] = np.array([state[3]*np.cos(state[2]), state[3]*np.sin(state[2])])
+            regression_targets[ymin:ymax, xmin:xmax, 8] = state[3]/obj.wheelbase*np.tan(state[4])
+            
             corners = obj.get_corners()
             corners_px = np.array([self.world_to_pixel(c + obj.state[:2]) for c in corners]).astype(np.int32)
             cv2.fillPoly(matching_tensor, pts=[corners_px],color=(1),lineType=cv2.LINE_8)
