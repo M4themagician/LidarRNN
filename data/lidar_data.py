@@ -7,7 +7,8 @@ from data.box_object import BoxObject
 
 
 class LidarData():
-    def __init__(self, width_px, pixel_scale, max_objects, min_spawn_distance, delta_t, target_width, debug = False):
+    pixel_error_range = (-5, 6)
+    def __init__(self, width_px, pixel_scale, max_objects, min_spawn_distance, delta_t, target_width, debug = False, draw_boxes = False):
         self.width_px = width_px
         self.pixel_scale = pixel_scale
         self.max_object = max_objects
@@ -17,6 +18,7 @@ class LidarData():
         self.map = np.zeros((self.width_px, self.width_px), dtype=np.uint8)
         self.target_width = target_width
         self.debug = debug
+        self.draw_boxes = draw_boxes
 
         world_pos_at_edges = self.pixel_to_world((0, self.width_px - 1))
         relative_coords_tensor = torch.linspace(world_pos_at_edges[0], world_pos_at_edges[1], self.width_px, dtype=torch.float32)
@@ -42,16 +44,33 @@ class LidarData():
         if self.debug:
             cv2.circle(self.map, self.world_to_pixel((0,0)).astype(np.int32), 5, color=((255,255,255)))
             cv2.rectangle(self.map, self.world_to_pixel((-self.min_spawn_distance, -self.min_spawn_distance)).astype(np.int32), self.world_to_pixel((self.min_spawn_distance,self.min_spawn_distance)).astype(np.int32), (255, 255, 255), 3)
-
+        obj_index = 1
         for o in self.objects:
             corners = o.get_corners()
-            corners_px = np.array([self.world_to_pixel(c + o.state[:2]) for c in corners]).astype(np.int32)
             # cv2.polylines(map.map,[corners_px],True,(255,255,255))
             # cv2.circle(map, map.world_to_pixel(self.state[:2]).astype(np.int32), 5, color=((255,255,255)))
-            o.draw(self.world_to_pixel(o.state[:2]), [corners_px], self.map)
+            if self.draw_boxes:
+                corners_px = [np.array([self.world_to_pixel(c + o.state[:2]) for c in corners + [corners[0]]]).astype(np.int32)]
+            else:
+                corners_world = [c + o.state[:2] for c in corners]
+                corners_world = [c - 1e-5*c/np.linalg.norm(c, 2) for c in corners_world]
+                visible_corners = []
+                corner_visibility = []
+                for c in corners_world:
+                    corner_visibility.append(not o.is_in(c))
+                for k in range(len(corner_visibility) + 1):
+                    b = corner_visibility[k % len(corner_visibility)]
+                    if b and corner_visibility[k-1]:
+                        visible_corners.append(np.array([self.world_to_pixel(corners_world[k-1 % len(corner_visibility)]), self.world_to_pixel(corners_world[k % len(corner_visibility)])]).astype(np.int32))
+
+
+                corners_px = visible_corners
+            o.draw(self.world_to_pixel(o.state[:2]), corners_px, self.map, 255)
+            obj_index += 1
+
 
     def add_new_object(self):
-        new_object = BoxObject(self.min_spawn_distance, self.delta_t, self.get_width_meter)
+        new_object = BoxObject(self.min_spawn_distance, self.delta_t)
         if new_object.has_left_counter >= new_object.max_trajectory_steps -1:
             return 
         new_object_trajectory = new_object.get_relevant_trajectory()
@@ -65,6 +84,8 @@ class LidarData():
                 xy_new = new_object_trajectory[i, :2]
                 xy_test = test_trajectory[i, :2]
                 if np.linalg.norm(xy_new - xy_test) < new_object.cover_radius + o.cover_radius:
+                    return
+                if np.linalg.norm(xy_new - np.array([0, 0])) < new_object.cover_radius:
                     return
         self.add_object(new_object)
 
@@ -80,12 +101,32 @@ class LidarData():
                 self.add_new_object()
                 tries += 1
 
+    def enclosing_box_to_pixel_range(self, box):
+        box = [self.world_to_pixel((box[0], box[1])).astype(np.int32), self.world_to_pixel((box[2], box[3])).astype(np.int32)]
+        box = [c for b in box for c in b]
+        
+        xmin, ymin, xmax, ymax = box# [min(self.width_px, max(0,c)) for c in box]
+        # dilate the regression target box by one, otherwise you get some strange artifacts due to masking with result of fillPoly.
+        xmin -= 1
+        ymin -= 1
+        xmax += 1
+        ymax += 1
+        # clip to image dims, otherwise more weirdness.
+        xmin = min(self.width_px, max(0,xmin))
+        ymin = min(self.width_px, max(0,ymin))
+        xmax = min(self.width_px, max(0,xmax))
+        ymax = min(self.width_px, max(0,ymax))
+
+        return xmin, xmax, ymin, ymax
+
     def __getitem__(self, idx):
         # each time a sample is drawn, advance one step and draw the map
         self.step()
         self.draw()
-        item = {}
-        item['input_tensor'] = torch.from_numpy(self.map).float()
+        
+        
+        
+        
 
         ### define matching tensor and regression target tensor (full map width)
         # fill with ignore tensor (just draw boxes filled)
@@ -106,23 +147,10 @@ class LidarData():
 
         matching_tensor = np.zeros((self.width_px, self.width_px))
         regression_targets = np.zeros((self.width_px, self.width_px, 9))
-        for obj in self.objects:
+        for k, obj in enumerate(self.objects, start=1):
             state = obj.get_centered_pose()
             box = obj.get_enclosing_box()
-            box = [self.world_to_pixel((box[0], box[1])).astype(np.int32), self.world_to_pixel((box[2], box[3])).astype(np.int32)]
-            box = [c for b in box for c in b]
-            
-            xmin, ymin, xmax, ymax = box# [min(self.width_px, max(0,c)) for c in box]
-            # dilate the regression target box by one, otherwise you get some strange artifacts due to masking with result of fillPoly.
-            xmin -= 1
-            ymin -= 1
-            xmax += 1
-            ymax += 1
-            # clip to image dims, otherwise more weirdness.
-            xmin = min(self.width_px, max(0,xmin))
-            ymin = min(self.width_px, max(0,ymin))
-            xmax = min(self.width_px, max(0,xmax))
-            ymax = min(self.width_px, max(0,ymax))
+            xmin, xmax, ymin, ymax = self.enclosing_box_to_pixel_range(box)
             regression_targets[ymin:ymax, xmin:xmax, :2] = state[:2]
             regression_targets[ymin:ymax, xmin:xmax, 2:4] = np.array([np.cos(state[2]), np.sin(state[2])])
             regression_targets[ymin:ymax, xmin:xmax, 4:6] = np.array([obj.length, obj.width])
@@ -132,10 +160,31 @@ class LidarData():
             corners = obj.get_corners()
             corners_px = np.array([self.world_to_pixel(c + obj.state[:2]) for c in corners]).astype(np.int32)
             cv2.fillPoly(matching_tensor, pts=[corners_px],color=(1),lineType=cv2.LINE_8)
+
+
+        # make box fragments to lidar data:
+        #obj_image = self.map#[ymin:ymax, xmin:xmax]
+        non_zero_idx = cv2.findNonZero(self.map) #(obj_image == k).astype(np.uint8))
+        self.map *= 0
+        if non_zero_idx is not None:
+            print(non_zero_idx)
+            for pair in non_zero_idx:
+                for i,j in pair:
+                    i_new = i + np.random.randint(*self.pixel_error_range)
+                    j_new = j + np.random.randint(*self.pixel_error_range)
+                    if (i_new < 0) or (i_new >= self.width_px) or (j_new < 0) or (j_new >= self.width_px):
+                        continue
+                    self.map[j_new, i_new] = 255
+
+
         matching_tensor = torch.from_numpy(matching_tensor)
         regression_targets = torch.from_numpy(regression_targets)
         regression_targets[..., :2] = regression_targets[..., :2] - self.rel_coordinate_grid
         regression_targets[matching_tensor==0] = 0
+
+        # self.map[self.map > 0] = 255
+        item = {}
+        item['input_tensor'] = torch.from_numpy(self.map).float()
         item['classification_targets'] = F.interpolate(matching_tensor.unsqueeze(0).unsqueeze(0), (self.target_width, self.target_width), mode='nearest').squeeze(0).squeeze(0)
         item['regression_targets'] = F.interpolate(regression_targets.permute(2, 0, 1).unsqueeze(0), (self.target_width, self.target_width), mode='nearest').squeeze(0)
         return item
@@ -232,10 +281,10 @@ if __name__ == '__main__':
     write_video = False
     delta_t = 1/30
     max_trajectory_length = 300
-    map_size = 600
-    target_size = 600
+    map_size = 800
+    target_size = 400
     max_objects = 20
-    pixel_scale = 0.2 if debug else 0.05
+    pixel_scale = 0.2 if debug else 0.1
     map_width_meter = 0.9*map_size/2*pixel_scale if debug else map_size/2*pixel_scale
     if write_video:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')

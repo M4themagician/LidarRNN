@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 import math
 import random
-from data.geometry import rotate, random_number
+from data.geometry import rotate, random_number, rotate_around
 
 
 class BoxObject():
@@ -18,7 +18,8 @@ class BoxObject():
     persistent_control_steps = 150
     frequency_scales = 6
     frequency_range = (-1, 1)
-    def __init__(self, min_spawn_distance, delta_t, map_width_meter, max_trajectory_steps = 1000):
+    draw_boxes = False
+    def __init__(self, min_spawn_distance, delta_t, max_trajectory_steps = 1000):
         self.length = random.uniform(*self.length_range)
         self.width = random.uniform(*self.width_range)
         self.wheelbase = random.uniform(max(self.wheelbase_range[0], self.length_range[0]), min(self.wheelbase_range[1], self.length) )
@@ -58,9 +59,29 @@ class BoxObject():
         self.state[2] = init_heading
         self.state[3] = init_speed
 
-    def draw(self, origin, corners, map):
-        cv2.polylines(map ,corners,True,(255,255,255))
-        cv2.circle(map, origin.astype(np.int32), 5, color=((255,255,255)))
+    def draw(self, origin, corners, map, obj_index):
+
+        
+        cv2.polylines(map ,corners,False,(obj_index,obj_index,obj_index))
+        #cv2.circle(map, origin.astype(np.int32), 5, color=((255,255,255)))
+
+
+    def is_in(self, p):
+        corners = self.get_corners()
+        normal_x = corners[0] - corners[3]
+        normal_x /= np.linalg.norm(normal_x)
+        normal_y = corners[2] - corners[3]
+        normal_y /= np.linalg.norm(normal_y)
+        # check if point p = (x,y) lies within the object rectangle
+        p_new = p - corners[3] - self.state[:2] #rotate(p - corners[3], self.state[2]) #+ corners[3]
+        dot_x = np.dot(p_new, normal_x)
+        dot_y = np.dot(p_new, normal_y)
+        print(p_new, dot_x, dot_y, self.length, self.width)
+        
+        if dot_x > self.length or dot_y > self.width or dot_x < 0 or dot_y < 0:
+            return False
+        return True
+
 
     def has_left(self):
         return self.time_counter >= self.has_left_counter
@@ -180,4 +201,11 @@ class BoxObject():
         if not self.has_left():
             self.state = self.trajectory[self.time_counter, :]
 
+if __name__ == "__main__":
+    box = BoxObject(5, 1/30)
+
+    centered_state = box.get_centered_pose()
+    just_outside = centered_state[:2] + rotate([box.length/2 + 1e-5, 0], centered_state[2])
+    just_inside = centered_state[:2] + rotate([box.length/2 - 1e-2, 0], centered_state[2])
+    print(box.is_in(centered_state[:2]), box.is_in(just_outside), box.is_in(just_inside))
 
