@@ -21,7 +21,7 @@ class LidarRNN(nn.Module):
         grid = torch.dstack([grid_x, grid_y])
         self.register_buffer("coordinate_grid", grid, persistent=False)
         
-        
+        self.output_width_px = output_width_px
         layers = []
         in_channels = 1
         for c in self.down_channels:
@@ -31,14 +31,23 @@ class LidarRNN(nn.Module):
         for c in self.up_channels:
             layers.append(DenseUpsamplingConvolution(in_channels, c, 2))
             in_channels = c
-        out_conv = nn.Sequential(ResidualBlock(in_channels, 64, nn.ReLU, depth=2, downsample=False, separable=True), nn.Conv2d(64, 2+9, kernel_size=1))
-        self.layers = nn.Sequential(*layers, out_conv)
+        self.layers = nn.Sequential(*layers)
+        self.out_conv = nn.Sequential(ResidualBlock(2*in_channels, 64, nn.ReLU, depth=2, downsample=False, separable=True), nn.Conv2d(64, 2+9, kernel_size=1))
+        self.hidden_conv = nn.Conv2d(2*in_channels, in_channels, 1)
+        self.hidden_channels = in_channels
+        
+    def init_hidden(self):
+        return torch.zeros((1, self.hidden_channels, self.output_width_px,self.output_width_px))
 
-    def forward(self, x):
-        return self.layers(x)
+    def forward(self, x, hidden):
+        features = torch.cat((self.layers(x), hidden), dim=1)
+        hidden = self.hidden_conv(features)
+        out = self.out_conv(features)
+        return out, hidden
     
-    def infer(self, x):
-        x = self.layers(x).squeeze(0).permute(1, 2, 0)
+    def infer(self, x, hidden):
+        x, hidden = self.forward(x, hidden)
+        x = x.squeeze(0).permute(1, 2, 0)
         
         x[..., 2:4] = x[..., 2:4] + self.coordinate_grid
         x = torch.flatten(x, 0, 1)
@@ -50,7 +59,7 @@ class LidarRNN(nn.Module):
         xy_offsets = x[..., 2:4]
         cos_yaw = x[..., 4]
         sin_yaw = x[..., 5]
-        lw = x[..., 6:8]
+        lw_v_xy_yaw_rate = x[..., 6:]
         heading = torch.atan2(sin_yaw, cos_yaw)
         nms_boxes = torch.cat((xy_offsets - self.nms_position_radius, xy_offsets + self.nms_position_radius), dim = 1)
         top_box_idxs = batched_nms(nms_boxes, P, 0*P, self.nms_iou_threshold)
@@ -60,7 +69,7 @@ class LidarRNN(nn.Module):
                 top_k = k
                 break
         top_box_idxs_threshed = top_box_idxs[:top_k]
-        out_boxes = torch.cat((P.unsqueeze(1), xy_offsets, heading.unsqueeze(1), lw), dim=1)
+        out_boxes = torch.cat((P.unsqueeze(1), xy_offsets, heading.unsqueeze(1), lw_v_xy_yaw_rate), dim=1)
         top_boxes = torch.index_select(out_boxes, 0, top_box_idxs_threshed)
         
-        return top_boxes
+        return top_boxes, hidden

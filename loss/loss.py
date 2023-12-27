@@ -18,5 +18,5 @@ class BoxTrackingLoss(nn.Module):
         loss = self.cross_entropy_loss.forward(classification_prediction, classification_targets)
         regression_loss = self.smooth_L1_loss.forward(regression_prediction, regression_targets)
         regression_loss[classification_targets.unsqueeze(1).expand(regression_loss.size()) == 0] = 0
-        regression_loss = regression_loss[:, :6, ...]
+        #regression_loss = regression_loss[:, :6, ...]
         return self.classification_weight*loss + self.regression_weight*regression_loss.mean()
