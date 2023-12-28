@@ -76,7 +76,6 @@ class BoxObject():
         p_new = p - corners[3] - self.state[:2] #rotate(p - corners[3], self.state[2]) #+ corners[3]
         dot_x = np.dot(p_new, normal_x)
         dot_y = np.dot(p_new, normal_y)
-        print(p_new, dot_x, dot_y, self.length, self.width)
         
         if dot_x > self.length or dot_y > self.width or dot_x < 0 or dot_y < 0:
             return False

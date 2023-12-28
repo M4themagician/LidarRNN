@@ -45,6 +45,7 @@ class LidarData():
             cv2.circle(self.map, self.world_to_pixel((0,0)).astype(np.int32), 5, color=((255,255,255)))
             cv2.rectangle(self.map, self.world_to_pixel((-self.min_spawn_distance, -self.min_spawn_distance)).astype(np.int32), self.world_to_pixel((self.min_spawn_distance,self.min_spawn_distance)).astype(np.int32), (255, 255, 255), 3)
         obj_index = 1
+        visible_corners = []
         for o in self.objects:
             corners = o.get_corners()
             # cv2.polylines(map.map,[corners_px],True,(255,255,255))
@@ -64,8 +65,9 @@ class LidarData():
                         visible_corners.append(np.array([self.world_to_pixel(corners_world[k-1 % len(corner_visibility)]), self.world_to_pixel(corners_world[k % len(corner_visibility)])]).astype(np.int32))
 
 
-                corners_px = visible_corners
-            o.draw(self.world_to_pixel(o.state[:2]), corners_px, self.map, 255)
+                #corners_px = visible_corners
+            cv2.polylines(self.map ,visible_corners,False,(255,255,255))
+            #o.draw(self.world_to_pixel(o.state[:2]), corners_px, self.map, 255)
             obj_index += 1
 
 
@@ -167,7 +169,6 @@ class LidarData():
         non_zero_idx = cv2.findNonZero(self.map) #(obj_image == k).astype(np.uint8))
         self.map *= 0
         if non_zero_idx is not None:
-            print(non_zero_idx)
             for pair in non_zero_idx:
                 for i,j in pair:
                     i_new = i + np.random.randint(*self.pixel_error_range)
@@ -248,7 +249,7 @@ if __name__ == '__main__':
             normalize = (-2*np.pi, 2*np.pi)
             caption = "vehicle heading"
         elif key == ord('v'):
-            data = np.linalg.norm(regression_targets[..., 4:6], axis=-1)
+            data = np.linalg.norm(regression_targets[..., 6:8], axis=-1)
             normalize = (0, 60)
             caption = "norm of vehicle speed"
         elif key == ord('o'):
@@ -257,11 +258,11 @@ if __name__ == '__main__':
             normalize = (-10, 10)
             caption = "angular velocity"
         elif key == ord('l'):
-            data = regression_targets[..., 7]
+            data = regression_targets[..., 4]
             normalize = (2.69, 6)
             caption = "vehicle length"
         elif key == ord('w'):
-            data = regression_targets[..., 8]
+            data = regression_targets[..., 5]
             normalize = (1.66, 2.1)
             caption = "vehicle width"
         else:
