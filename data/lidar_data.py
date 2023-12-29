@@ -60,18 +60,18 @@ class LidarData:
     def add_object(self, lidar_object):
         self.objects.append(lidar_object)
 
-    def make_background(self):
+    def make_background(self, density = 1e-3):
         return (
             255
             * (sparse_random(
                 self.width_px,
                 self.width_px,
-                density=0.001,
+                density=density,
             ).A)
         ).astype(np.uint8)
     
     def add_noise_to_map(self):
-        self.map += ((1 - self.background_updates / self.background_persistence) * self.background_noise[0] + (self.background_updates / self.background_persistence) * self.background_noise[1]).astype(np.uint8)
+        self.map += (self.make_background(density=1e-4) + (1 - self.background_updates / self.background_persistence) * self.background_noise[0] + (self.background_updates / self.background_persistence) * self.background_noise[1]).astype(np.uint8)
         self.background_updates += 1
         if self.background_updates == self.background_persistence:
             self.background_noise.append(self.make_background())
