@@ -34,8 +34,8 @@ class LidarData:
         self.draw_boxes = draw_boxes
         self.background_updates = 0
         self.background_noise = deque(maxlen=2)
-        self.background_noise.put(self.make_background())
-        self.background_noise.put(self.make_background())
+        self.background_noise.append(self.make_background())
+        self.background_noise.append(self.make_background())
 
         world_pos_at_edges = self.pixel_to_world((0, self.width_px - 1))
         relative_coords_tensor = torch.linspace(
@@ -63,23 +63,22 @@ class LidarData:
     def make_background(self):
         return (
             255
-            * sparse_random(
+            * (sparse_random(
                 self.width_px,
                 self.width_px,
-                density=0.01,
-                random_state=np.random.default_rng,
-            ).A
+                density=0.001,
+            ).A)
         ).astype(np.uint8)
-
-    def draw(self, wait=0):
-        self.map = (1 - self.background_updates / self.background_persistence) * self.background_noise[
-            0
-        ] + self.background_updates / self.background_persistence * self.background_noise[
-            1
-        ]  # np.zeros((self.width_px, self.width_px), dtype=np.uint8)
+    
+    def add_noise_to_map(self):
+        self.map += ((1 - self.background_updates / self.background_persistence) * self.background_noise[0] + (self.background_updates / self.background_persistence) * self.background_noise[1]).astype(np.uint8)
         self.background_updates += 1
         if self.background_updates == self.background_persistence:
-            self.background_noise.appendleft(self.make_background())
+            self.background_noise.append(self.make_background())
+            self.background_updates = 0
+
+    def draw(self, wait=0):
+        self.map = np.zeros((self.width_px, self.width_px), dtype=np.uint8)
         if self.debug:
             cv2.circle(
                 self.map,
@@ -236,6 +235,7 @@ class LidarData:
         regression_targets[matching_tensor == 0] = 0
 
         # self.map[self.map > 0] = 255
+        self.add_noise_to_map()
         item = {}
         item["input_tensor"] = torch.from_numpy(self.map).float()
         item["classification_targets"] = (
