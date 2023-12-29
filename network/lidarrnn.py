@@ -18,12 +18,8 @@ class LidarRNN(nn.Module):
         xy = (0, output_width_px - 1)
         xy = [c - output_width_px / 2 for c in xy]
         xy = [(c + 0.5) * pixel_scale for c in xy]
-        relative_coords_tensor = torch.linspace(
-            xy[0], xy[1], output_width_px, dtype=torch.float32
-        )
-        grid_x, grid_y = torch.meshgrid(
-            relative_coords_tensor, relative_coords_tensor, indexing="xy"
-        )
+        relative_coords_tensor = torch.linspace(xy[0], xy[1], output_width_px, dtype=torch.float32)
+        grid_x, grid_y = torch.meshgrid(relative_coords_tensor, relative_coords_tensor, indexing="xy")
         grid = torch.dstack([grid_x, grid_y])
         self.register_buffer("coordinate_grid", grid, persistent=False)
 
@@ -31,9 +27,7 @@ class LidarRNN(nn.Module):
         layers = []
         in_channels = 1
         for c in self.down_channels:
-            layers.append(
-                ResidualBlock(in_channels, c, nn.ReLU, depth=2, separable=True)
-            )
+            layers.append(ResidualBlock(in_channels, c, nn.ReLU, depth=2, separable=True))
             in_channels = c
 
         for c in self.up_channels:
@@ -41,32 +35,31 @@ class LidarRNN(nn.Module):
             in_channels = c
         self.layers = nn.Sequential(*layers)
         self.out_conv = nn.Sequential(
-            ResidualBlock(
-                2 * in_channels, 64, nn.ReLU, depth=2, downsample=False, separable=True
-            ),
+            ResidualBlock(2 * in_channels, 64, nn.ReLU, depth=2, downsample=False, separable=True),
             nn.Conv2d(64, 2 + 9, kernel_size=1),
         )
         self.hidden_conv = nn.Conv2d(2 * in_channels, in_channels, 1)
         self.hidden_channels = in_channels
 
     def init_hidden(self):
-        return torch.zeros(
-            (1, self.hidden_channels, self.output_width_px, self.output_width_px)
-        )
+        return torch.zeros((1, self.hidden_channels, self.output_width_px, self.output_width_px))
 
     def forward(self, x, hidden):
-        features = torch.cat((self.layers(x), hidden), dim=1)
-        hidden = self.hidden_conv(features)
-        out = self.out_conv(features)
+        features = self.layers(x)
+        cat_features = torch.cat((features, hidden), dim=1)
+        out = self.out_conv(cat_features)
+        hidden = self.hidden_conv(cat_features)
         return out, hidden
 
     def infer(self, x, hidden):
         x, hidden = self.forward(x, hidden)
         x = x.squeeze(0).permute(1, 2, 0)
 
+        # add grid cell world coordinates to get object center coordinates in world coords
         x[..., 2:4] = x[..., 2:4] + self.coordinate_grid
         x = torch.flatten(x, 0, 1)
 
+        # get likelihood of objects from logits for each cell
         P, Class_idxs = torch.max(torch.softmax(x[..., :2], dim=-1), dim=-1)
         P = P[Class_idxs != 0]
         x = x[Class_idxs != 0, ...]
@@ -76,6 +69,9 @@ class LidarRNN(nn.Module):
         sin_yaw = x[..., 5]
         lw_v_xy_yaw_rate = x[..., 6:]
         heading = torch.atan2(sin_yaw, cos_yaw)
+
+        # filter out overlapping objects with nms
+        # boxes used for nms are just axis aligned around the predicted object centers
         nms_boxes = torch.cat(
             (
                 xy_offsets - self.nms_position_radius,
@@ -83,6 +79,8 @@ class LidarRNN(nn.Module):
             ),
             dim=1,
         )
+
+        # use category agnostic nms (0*P as index)
         top_box_idxs = batched_nms(nms_boxes, P, 0 * P, self.nms_iou_threshold)
         top_k = top_box_idxs.size()[0]
         for k, i in enumerate(top_box_idxs):
@@ -90,9 +88,7 @@ class LidarRNN(nn.Module):
                 top_k = k
                 break
         top_box_idxs_threshed = top_box_idxs[:top_k]
-        out_boxes = torch.cat(
-            (P.unsqueeze(1), xy_offsets, heading.unsqueeze(1), lw_v_xy_yaw_rate), dim=1
-        )
+        out_boxes = torch.cat((P.unsqueeze(1), xy_offsets, heading.unsqueeze(1), lw_v_xy_yaw_rate), dim=1)
         top_boxes = torch.index_select(out_boxes, 0, top_box_idxs_threshed)
 
         return top_boxes, hidden

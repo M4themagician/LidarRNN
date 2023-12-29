@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+from collections import deque
+from scipy.sparse import random as sparse_random
 import torch
 import torch.nn.functional as F
 from data.box_object import BoxObject
@@ -7,6 +9,7 @@ from data.box_object import BoxObject
 
 class LidarData:
     pixel_error_range = (-3, 4)
+    background_persistence = 30
 
     def __init__(
         self,
@@ -29,6 +32,10 @@ class LidarData:
         self.target_width = target_width
         self.debug = debug
         self.draw_boxes = draw_boxes
+        self.background_updates = 0
+        self.background_noise = deque(maxlen=2)
+        self.background_noise.put(self.make_background())
+        self.background_noise.put(self.make_background())
 
         world_pos_at_edges = self.pixel_to_world((0, self.width_px - 1))
         relative_coords_tensor = torch.linspace(
@@ -37,9 +44,7 @@ class LidarData:
             self.width_px,
             dtype=torch.float32,
         )
-        grid_x, grid_y = torch.meshgrid(
-            relative_coords_tensor, relative_coords_tensor, indexing="xy"
-        )
+        grid_x, grid_y = torch.meshgrid(relative_coords_tensor, relative_coords_tensor, indexing="xy")
         grid = torch.dstack([grid_x, grid_y])
         self.rel_coordinate_grid = grid
 
@@ -55,8 +60,26 @@ class LidarData:
     def add_object(self, lidar_object):
         self.objects.append(lidar_object)
 
+    def make_background(self):
+        return (
+            255
+            * sparse_random(
+                self.width_px,
+                self.width_px,
+                density=0.01,
+                random_state=np.random.default_rng,
+            ).A
+        ).astype(np.uint8)
+
     def draw(self, wait=0):
-        self.map = np.zeros((self.width_px, self.width_px), dtype=np.uint8)
+        self.map = (1 - self.background_updates / self.background_persistence) * self.background_noise[
+            0
+        ] + self.background_updates / self.background_persistence * self.background_noise[
+            1
+        ]  # np.zeros((self.width_px, self.width_px), dtype=np.uint8)
+        self.background_updates += 1
+        if self.background_updates == self.background_persistence:
+            self.background_noise.appendleft(self.make_background())
         if self.debug:
             cv2.circle(
                 self.map,
@@ -66,12 +89,8 @@ class LidarData:
             )
             cv2.rectangle(
                 self.map,
-                self.world_to_pixel(
-                    (-self.min_spawn_distance, -self.min_spawn_distance)
-                ).astype(np.int32),
-                self.world_to_pixel(
-                    (self.min_spawn_distance, self.min_spawn_distance)
-                ).astype(np.int32),
+                self.world_to_pixel((-self.min_spawn_distance, -self.min_spawn_distance)).astype(np.int32),
+                self.world_to_pixel((self.min_spawn_distance, self.min_spawn_distance)).astype(np.int32),
                 (255, 255, 255),
                 3,
             )
@@ -82,19 +101,10 @@ class LidarData:
             # cv2.polylines(map.map,[corners_px],True,(255,255,255))
             # cv2.circle(map, map.world_to_pixel(self.state[:2]).astype(np.int32), 5, color=((255,255,255)))
             if self.draw_boxes:
-                corners_px = [
-                    np.array(
-                        [
-                            self.world_to_pixel(c + o.state[:2])
-                            for c in corners + [corners[0]]
-                        ]
-                    ).astype(np.int32)
-                ]
+                corners_px = [np.array([self.world_to_pixel(c + o.state[:2]) for c in corners + [corners[0]]]).astype(np.int32)]
             else:
                 corners_world = [c + o.state[:2] for c in corners]
-                corners_world = [
-                    c - 1e-5 * c / np.linalg.norm(c, 2) for c in corners_world
-                ]
+                corners_world = [c - 1e-5 * c / np.linalg.norm(c, 2) for c in corners_world]
                 visible_corners = []
                 corner_visibility = []
                 for c in corners_world:
@@ -105,12 +115,8 @@ class LidarData:
                         visible_corners.append(
                             np.array(
                                 [
-                                    self.world_to_pixel(
-                                        corners_world[k - 1 % len(corner_visibility)]
-                                    ),
-                                    self.world_to_pixel(
-                                        corners_world[k % len(corner_visibility)]
-                                    ),
+                                    self.world_to_pixel(corners_world[k - 1 % len(corner_visibility)]),
+                                    self.world_to_pixel(corners_world[k % len(corner_visibility)]),
                                 ]
                             ).astype(np.int32)
                         )
@@ -134,10 +140,7 @@ class LidarData:
             for i in range(min(new_object_trajectory_length, test_trajectory_length)):
                 xy_new = new_object_trajectory[i, :2]
                 xy_test = test_trajectory[i, :2]
-                if (
-                    np.linalg.norm(xy_new - xy_test)
-                    < new_object.cover_radius + o.cover_radius
-                ):
+                if np.linalg.norm(xy_new - xy_test) < new_object.cover_radius + o.cover_radius:
                     return
                 if np.linalg.norm(xy_new - np.array([0, 0])) < new_object.cover_radius:
                     return
@@ -205,26 +208,14 @@ class LidarData:
             box = obj.get_enclosing_box()
             xmin, xmax, ymin, ymax = self.enclosing_box_to_pixel_range(box)
             regression_targets[ymin:ymax, xmin:xmax, :2] = state[:2]
-            regression_targets[ymin:ymax, xmin:xmax, 2:4] = np.array(
-                [np.cos(state[2] % np.pi), np.sin(state[2] % np.pi)]
-            )
-            regression_targets[ymin:ymax, xmin:xmax, 4:6] = np.array(
-                [obj.length, obj.width]
-            )
-            regression_targets[ymin:ymax, xmin:xmax, 6:8] = np.array(
-                [state[3] * np.cos(state[2]), state[3] * np.sin(state[2])]
-            )
-            regression_targets[ymin:ymax, xmin:xmax, 8] = (
-                state[3] / obj.wheelbase * np.tan(state[4])
-            )
+            regression_targets[ymin:ymax, xmin:xmax, 2:4] = np.array([np.cos(state[2] % np.pi), np.sin(state[2] % np.pi)])
+            regression_targets[ymin:ymax, xmin:xmax, 4:6] = np.array([obj.length, obj.width])
+            regression_targets[ymin:ymax, xmin:xmax, 6:8] = np.array([state[3] * np.cos(state[2]), state[3] * np.sin(state[2])])
+            regression_targets[ymin:ymax, xmin:xmax, 8] = state[3] / obj.wheelbase * np.tan(state[4])
 
             corners = obj.get_corners()
-            corners_px = np.array(
-                [self.world_to_pixel(c + obj.state[:2]) for c in corners]
-            ).astype(np.int32)
-            cv2.fillPoly(
-                matching_tensor, pts=[corners_px], color=(1), lineType=cv2.LINE_8
-            )
+            corners_px = np.array([self.world_to_pixel(c + obj.state[:2]) for c in corners]).astype(np.int32)
+            cv2.fillPoly(matching_tensor, pts=[corners_px], color=(1), lineType=cv2.LINE_8)
 
         # make box fragments to lidar data:
         # obj_image = self.map#[ymin:ymax, xmin:xmax]
@@ -235,20 +226,13 @@ class LidarData:
                 for i, j in pair:
                     i_new = i + np.random.randint(*self.pixel_error_range)
                     j_new = j + np.random.randint(*self.pixel_error_range)
-                    if (
-                        (i_new < 0)
-                        or (i_new >= self.width_px)
-                        or (j_new < 0)
-                        or (j_new >= self.width_px)
-                    ):
+                    if (i_new < 0) or (i_new >= self.width_px) or (j_new < 0) or (j_new >= self.width_px):
                         continue
                     self.map[j_new, i_new] = 255
 
         matching_tensor = torch.from_numpy(matching_tensor)
         regression_targets = torch.from_numpy(regression_targets)
-        regression_targets[..., :2] = (
-            regression_targets[..., :2] - self.rel_coordinate_grid
-        )
+        regression_targets[..., :2] = regression_targets[..., :2] - self.rel_coordinate_grid
         regression_targets[matching_tensor == 0] = 0
 
         # self.map[self.map > 0] = 255
@@ -274,12 +258,8 @@ class LidarData:
         return 100000
 
     def world_to_pixel(self, xy):
-        pixel_x = (
-            xy[0] + ((self.width_px - 0.5) * self.pixel_scale)
-        ) / self.pixel_scale - self.width_px / 2
-        pixel_y = (
-            xy[1] + ((self.width_px - 0.5) * self.pixel_scale)
-        ) / self.pixel_scale - self.width_px / 2
+        pixel_x = (xy[0] + ((self.width_px - 0.5) * self.pixel_scale)) / self.pixel_scale - self.width_px / 2
+        pixel_y = (xy[1] + ((self.width_px - 0.5) * self.pixel_scale)) / self.pixel_scale - self.width_px / 2
         return np.array([pixel_x, pixel_y])
 
     def pixel_to_world(self, xy):
@@ -295,9 +275,7 @@ def make_lidar_data():
     target_size = 200
     max_objects = 20
     pixel_scale = 0.2 if debug else 0.075
-    map_width_meter = (
-        0.9 * map_size / 2 * pixel_scale if debug else map_size / 2 * pixel_scale
-    )
+    map_width_meter = 0.9 * map_size / 2 * pixel_scale if debug else map_size / 2 * pixel_scale
     data = LidarData(
         map_size,
         pixel_scale,
@@ -379,9 +357,7 @@ if __name__ == "__main__":
     target_size = 400
     max_objects = 20
     pixel_scale = 0.2 if debug else 0.1
-    map_width_meter = (
-        0.9 * map_size / 2 * pixel_scale if debug else map_size / 2 * pixel_scale
-    )
+    map_width_meter = 0.9 * map_size / 2 * pixel_scale if debug else map_size / 2 * pixel_scale
     if write_video:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(
