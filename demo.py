@@ -31,6 +31,7 @@ def draw_predictions(item, objects):
 
 if __name__ == "__main__":
     cudnn.benchmark = True
+    show = True
     with torch.inference_mode():
         debug = False
         delta_t = 1 / 30
@@ -51,7 +52,8 @@ if __name__ == "__main__":
         net = DP(LidarRNN(dataset.width_px // 4, dataset.pixel_scale * 4))
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter("video.mp4", fourcc=fourcc, fps=30, frameSize=(2 * map_size, map_size))
+        if not show:
+            writer = cv2.VideoWriter("video.mp4", fourcc=fourcc, fps=30, frameSize=(2 * map_size, map_size))
 
         net.load_state_dict(torch.load("weights_new.pth"))
         net = net.module
@@ -72,7 +74,13 @@ if __name__ == "__main__":
             t1 = perf_counter()
             times.append(t1 - t0)
             vis = draw_predictions(item, prediction)
-            writer.write(vis)
+            if show:
+                cv2.imshow("LidarRNN", vis)
+                key = cv2.waitKey(1)
+                if key == 27:
+                    break
+            else:
+                writer.write(vis)
             counter += 1
             if counter % frequency == 0:
                 print(f"Average inference time: {np.mean(times)}")
